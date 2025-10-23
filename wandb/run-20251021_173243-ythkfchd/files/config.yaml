@@ -1,0 +1,69 @@
+_wandb:
+    value:
+        cli_version: 0.22.2
+        code_path: code/test_wandb.py
+        e:
+            wqetnxyd1dgxrqx8nlvlrwpgy3d8so58:
+                codePath: test_wandb.py
+                codePathLocal: test_wandb.py
+                cpu_count: 24
+                cpu_count_logical: 48
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "4030220222464"
+                        used: "2957705637888"
+                email: doraku.suzaku@gmail.com
+                executable: /home/llama/anaconda3/bin/python
+                git:
+                    commit: fdb67fc77c58036a8346b4056869a20bfdffac18
+                    remote: https://github.com/DorakuCN/nanoChat_mxfp4.git
+                gpu: NVIDIA GeForce RTX 5090 D
+                gpu_count: 2
+                gpu_nvidia:
+                    - architecture: Blackwell
+                      cudaCores: 21760
+                      memoryTotal: "34190917632"
+                      name: NVIDIA GeForce RTX 5090 D
+                      uuid: GPU-a95ec9fd-0f0d-3049-5bad-24aba599b7fb
+                    - architecture: Blackwell
+                      cudaCores: 21760
+                      memoryTotal: "34190917632"
+                      name: NVIDIA GeForce RTX 5090 D
+                      uuid: GPU-7c4b6093-fbbd-9248-7c6f-cef975687267
+                host: TRX40
+                memory:
+                    total: "270113722368"
+                os: Linux-6.14.0-33-generic-x86_64-with-glibc2.39
+                program: /home/llama/Tools/nanochat/test_wandb.py
+                python: CPython 3.12.3
+                root: /home/llama/Tools/nanochat
+                startedAt: "2025-10-21T09:32:43.926453Z"
+                writerId: wqetnxyd1dgxrqx8nlvlrwpgy3d8so58
+        m: []
+        python_version: 3.12.3
+        t:
+            "1":
+                - 105
+            "2":
+                - 105
+            "3":
+                - 2
+                - 13
+                - 15
+                - 16
+                - 61
+            "4": 3.12.3
+            "5": 0.22.2
+            "12": 0.22.2
+            "13": linux-x86_64
+batch_size:
+    value: 32
+epochs:
+    value: 10
+learning_rate:
+    value: 0.001
+model_type:
+    value: test_model
+test_run:
+    value: true

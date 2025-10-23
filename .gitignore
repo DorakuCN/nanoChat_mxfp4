@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+rustbpe/target/
+dev-ignore/
+
+# Archive directories
+archive/
+logs/
+logs_ddp/
+*.log
+
+# Temporary files
+.DS_Store
+*.tmp
+*.temp

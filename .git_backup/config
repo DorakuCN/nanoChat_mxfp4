@@ -1,0 +1,14 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[submodule]
+	active = .
+[branch "main"]
+	vscode-merge-base = origin/master
+	remote = origin
+	merge = refs/heads/main
+[remote "origin"]
+	url = https://github.com/DorakuCN/nanoChat_mxfp4.git
+	fetch = +refs/heads/*:refs/remotes/origin/*

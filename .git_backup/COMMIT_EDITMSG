@@ -1,0 +1,23 @@
+📚 项目整理和文档完善
+
+- 🗂️ 创建完整的文档体系：
+  - docs/pipeline_overview.md - 四阶段训练流程详细说明
+  - docs/quick_start_guide.md - 快速开始指南
+  - docs/scripts_reference.md - 脚本参考手册
+  - docs/project_structure.md - 项目结构说明
+
+- 🧹 项目结构优化：
+  - 更新.gitignore，添加归档目录忽略规则
+  - 更新README.md，添加文档索引链接
+  - 整理项目结构，提高可维护性
+
+- 📋 四阶段训练流程文档化：
+  - 基础预训练 (Base Pretraining)
+  - 中期指令训练 (Mid Training)
+  - 监督微调 (SFT)
+  - 强化学习 (RL)
+
+- 🔧 配置和脚本优化：
+  - 添加多个GPU内存配置选项
+  - 优化训练脚本和wandb集成
+  - 完善错误处理和日志记录
