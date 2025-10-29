@@ -299,8 +299,12 @@ for step in range(num_iterations + 1):
             print0(tokenizer.decode(sample[0]))
         model.train()
 
-    # save checkpoint at the end of the run (only on master process)
-    if master_process and last_step:
+    # save checkpoint periodically and at the end (only on master process)
+    # Target: checkpoint every ~1 hour
+    # Based on: ~370ms per step, so 4000 steps ≈ 25 min, 5000 steps ≈ 31 min
+    # We save at 4000, 8000, 12000, ... to keep within 1 hour window
+    save_every = 4000  # Save checkpoint every 4000 steps (~25 min)
+    if master_process and (last_step or (step > 0 and step % save_every == 0)):
         output_dirname = model_tag if model_tag else f"d{depth}" # e.g. d12
         checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
         save_checkpoint(
@@ -317,6 +321,7 @@ for step in range(num_iterations + 1):
                 "max_seq_len": max_seq_len,
             }
         )
+        print0(f"✅ Saved checkpoint at step {step}")
 
     if last_step:
         break

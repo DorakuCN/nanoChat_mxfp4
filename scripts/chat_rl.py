@@ -35,9 +35,11 @@ from tasks.gsm8k import GSM8K
 # RL hyperparameters
 run = "dummy" # wandb run name
 source = "sft" # mid|sft
+model_tag = None # which model tag to load, e.g. d16
+step = None # which checkpoint step to load
 dtype = "bfloat16"
-device_batch_size = 8 # no forward pass will go above this to not OOM
-examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
+device_batch_size = 4 # per-rank micro batch for rollouts (bumped for better GPU utilization)
+examples_per_step = 32 # total examples per optimisation step across all ranks
 num_samples = 16 # number of samples per example (/question)
 max_new_tokens = 256
 temperature = 1.0
@@ -76,7 +78,7 @@ if wandb_available and not use_dummy_wandb:
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=run, config=user_config)
 
 # Init model and tokenizer
-model, tokenizer, meta = load_model(source, device, phase="eval")
+model, tokenizer, meta = load_model(source, device, phase="train", model_tag=model_tag, step=step)
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -119,6 +121,12 @@ def get_batch():
                 )
             generated_token_sequences.extend(generated_token_sequences_batch)
             masks.extend(masks_batch)
+            # Clean up intermediate batch data to free memory
+            del generated_token_sequences_batch, masks_batch
+            # Clear GPU cache after each sampling step to free KV cache memory immediately
+            # This is critical because each generate_batch() creates a large KV cache
+            if sampling_step % 2 == 1 or sampling_step == num_sampling_steps - 1:
+                torch.cuda.empty_cache()
 
         # Calculate the rewards for each sample
         rewards = []
@@ -148,6 +156,8 @@ def get_batch():
         # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
         mu = rewards.mean()
         advantages = rewards - mu
+        # Clean up intermediate data structures before yielding
+        del padded_generated_token_sequences, padded_masks, ids, mask_ids
         # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
         yield generated_token_sequences, inputs, targets, rewards, advantages
 
@@ -230,6 +240,8 @@ for step in range(num_steps):
 
     # Evaluate the model once in a while and log to wandb
     if step % eval_every == 0:
+        # Clear cache before evaluation to free memory
+        torch.cuda.empty_cache()
         model.eval()
         passk = torch.zeros(device_batch_size, device=device) # pass@k for k=1..device_batch_size
         with autocast_ctx:
@@ -249,6 +261,9 @@ for step in range(num_steps):
             "step": step,
             **log_passk,
         })
+        # Clean up evaluation data to free memory
+        del records, records_iter, num_records, passk, log_passk
+        torch.cuda.empty_cache()
 
     # Forward/Backward on rollouts over multiple examples in the dataset
     rewards_list = []
@@ -281,9 +296,13 @@ for step in range(num_steps):
             loss = -pg_obj
             loss.backward()
             print0(f"Step {step}/{num_steps} | Example step {example_step} | Pass {pass_idx} | loss: {loss.item():.6f} | Average reward: {rewards.mean().item()}")
+            # Clean up intermediate tensors to free memory
+            del logp, pg_obj, loss
         # For logging
         rewards_list.append(rewards_all.mean().item())
         sequence_lengths.extend(len(seq) for seq in sequences_all)
+        # Clean up batch data after processing
+        del sequences_all, inputs_all, targets_all, rewards_all, advantages_all
 
     # A bunch of logging for how the rollouts went this step
     mean_reward = sum(rewards_list) / len(rewards_list)
@@ -295,6 +314,8 @@ for step in range(num_steps):
         dist.all_reduce(mean_sequence_length_tensor, op=dist.ReduceOp.AVG)
         mean_reward = mean_reward_tensor.item()
         mean_sequence_length = mean_sequence_length_tensor.item()
+        # Clean up DDP tensors
+        del mean_reward_tensor, mean_sequence_length_tensor
     print0(f"Step {step}/{num_steps} | Average reward: {mean_reward} | Average sequence length: {mean_sequence_length:.2f}")
     wandb_run.log({
         "step": step,
@@ -314,6 +335,11 @@ for step in range(num_steps):
         "step": step,
         "lrm": lrm,
     })
+    # Clean up logging variables (after they're used)
+    del rewards_list, sequence_lengths
+    # Periodically clear GPU cache to prevent memory fragmentation
+    if step % 10 == 0:
+        torch.cuda.empty_cache()
 
     # Master process saves the model once in a while. Skip first step. Save last step.
     if master_process and ((step > 0 and step % save_every == 0) or step == num_steps - 1):

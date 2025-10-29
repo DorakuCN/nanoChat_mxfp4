@@ -1,42 +1,42 @@
 #!/bin/bash
 
-# 训练监控脚本
-echo "=== 双卡分布式训练监控 ==="
+# nanochat训练监控脚本
+# 用法: bash monitor_training.sh
+
+echo "=== nanochat训练监控 ==="
 echo "时间: $(date)"
-echo ""
+echo
+
+# 检查tmux会话状态
+echo "=== TMUX会话状态 ==="
+tmux list-sessions 2>/dev/null || echo "没有活动的tmux会话"
+echo
+
+# 检查GPU状态
+echo "=== GPU状态 ==="
+nvidia-smi --query-gpu=index,name,memory.used,memory.free,utilization.gpu --format=csv,noheader,nounits
+echo
 
 # 检查训练进程
-echo "=== 训练进程状态 ==="
+echo "=== 训练进程 ==="
 ps aux | grep -E "(torchrun|python.*base_train)" | grep -v grep
-echo ""
+echo
 
-# GPU状态
-echo "=== GPU状态 ==="
-nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader
-echo ""
-
-# 训练日志最后几行
-echo "=== 最新训练日志 ==="
-if [ -f "long_training.log" ]; then
-    tail -5 long_training.log
+# 显示最新训练日志
+echo "=== 最新训练进度 ==="
+if tmux has-session -t nanochat_training 2>/dev/null; then
+    tmux capture-pane -t nanochat_training -p | tail -5
 else
-    echo "日志文件不存在"
+    echo "tmux会话不存在"
 fi
-echo ""
+echo
 
-# 训练进度估算
-if [ -f "long_training.log" ]; then
-    echo "=== 训练进度估算 ==="
-    CURRENT_STEP=$(tail -1 long_training.log | grep -o "step [0-9]*" | grep -o "[0-9]*" | head -1)
-    if [ ! -z "$CURRENT_STEP" ]; then
-        TOTAL_STEPS=151040
-        PROGRESS=$(echo "scale=2; $CURRENT_STEP * 100 / $TOTAL_STEPS" | bc -l)
-        echo "当前步数: $CURRENT_STEP / $TOTAL_STEPS"
-        echo "完成进度: ${PROGRESS}%"
-        
-        # 估算剩余时间（基于当前速度）
-        REMAINING_STEPS=$((TOTAL_STEPS - CURRENT_STEP))
-        echo "剩余步数: $REMAINING_STEPS"
-        echo "预计剩余时间: 请查看日志中的时间信息"
-    fi
-fi
+# 显示训练日志文件
+echo "=== 最新日志文件 ==="
+ls -la logs/train_dual_gpu_$(date +%Y%m%d)_*.log 2>/dev/null | tail -1
+echo
+
+echo "=== 监控命令 ==="
+echo "查看tmux会话: tmux attach -t nanochat_training"
+echo "查看实时日志: tmux capture-pane -t nanochat_training -p"
+echo "停止训练: tmux kill-session -t nanochat_training"

@@ -1,15 +1,19 @@
 """
 Evaluate the Chat model.
-All the generic code lives here, and all the evlauation-specific
+All the generic code lives here, and all the evaluation-specific
 code lives in nanochat directory and is imported from here.
 
 Example runs:
 python -m scripts.chat_eval -a ARC-Easy
+python -m scripts.chat_eval --nproc 2 -a ARC-Easy  # auto relaunches under torchrun
 torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
 """
 
 import argparse
 from functools import partial
+import os
+import subprocess
+import sys
 
 import torch
 import torch.distributed as dist
@@ -188,14 +192,57 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--num-samples', type=int, default=1)
     parser.add_argument('-k', '--top-k', type=int, default=50)
     parser.add_argument('-b', '--batch-size', type=int, default=8, help='Batch size for categorical evaluation')
-    parser.add_argument('-g', '--model-tag', type=str, default=None, help='Model tag to load')
+    parser.add_argument('-g', '--model-tag', '--model_tag', dest='model_tag', type=str, default=None, help='Model tag to load')
     parser.add_argument('-s', '--step', type=int, default=None, help='Step to load')
     parser.add_argument('-x', '--max-problems', type=int, default=None, help='Max problems to evaluate')
+    parser.add_argument('-p', '--nproc', type=int, default=None, help='Number of GPU processes to launch (defaults to all visible GPUs).')
+
     args = parser.parse_args()
+
+    # Optionally relaunch under torchrun for multi-GPU evaluation when invoked directly.
+    already_under_torchrun = os.environ.get("LOCAL_RANK") is not None or os.environ.get("RANK") is not None
+    if not already_under_torchrun:
+        requested_nproc = args.nproc or torch.cuda.device_count() or 1
+        if requested_nproc > 1:
+            # Re-run this script under nanochat.torchrun_no_libuv with the same CLI args (minus --nproc)
+            filtered_args = []
+            argv = sys.argv[1:]
+            i = 0
+            while i < len(argv):
+                token = argv[i]
+                if token in ('-p', '--nproc'):
+                    i += 1
+                    # Skip the following value if present and not another flag
+                    if i < len(argv) and not argv[i].startswith('-'):
+                        i += 1
+                    continue
+                if token.startswith('--nproc='):
+                    i += 1
+                    continue
+                filtered_args.append(token)
+                i += 1
+
+            cmd = [
+                sys.executable,
+                '-m', 'nanochat.torchrun_no_libuv',
+                '--standalone',
+                f'--nproc_per_node={requested_nproc}',
+                '-m', 'scripts.chat_eval',
+                '--',
+                *filtered_args,
+            ]
+            os.environ.setdefault('CUDA_VISIBLE_DEVICES', ','.join(str(i) for i in range(requested_nproc)))
+            result = subprocess.run(cmd)
+            sys.exit(result.returncode)
+
+    # From here on we are inside the torchrun-launched worker (or a single-process run)
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
     ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
     autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=ptdtype)
+
+    if args.nproc is None:
+        args.nproc = ddp_world_size
 
     model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)

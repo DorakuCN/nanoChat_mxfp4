@@ -44,10 +44,12 @@ embedding_lr = 0.2
 matrix_lr = 0.02
 init_lr_frac = 1.0 # initial learning rate is this fraction of the base learning rate
 weight_decay = 0.0
-eval_every = 150
-eval_tokens = 20*524288
+eval_every = 300
+eval_tokens = 5*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
+save_every = 1000 # save checkpoint every N steps (0 disables periodic saves)
+torch_compile = 0 # torch_compile=1 enables torch.compile for faster training (higher memory usage)
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
@@ -72,7 +74,15 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 orig_model = model
-model = torch.compile(model, dynamic=False)
+
+# Optional torch.compile (controlled by CLI parameter or environment variable)
+torch_compile = int(os.environ.get("TORCH_COMPILE", torch_compile))
+
+if torch_compile:
+    print0("🔥 Using torch.compile (mode=reduce-overhead)")
+    model = torch.compile(model, dynamic=False, mode="reduce-overhead")
+else:
+    print0("⚡ Using eager mode")
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
 tokens_per_fwdbwd = device_batch_size * max_seq_len # tokens per iteration for a single rank
@@ -165,6 +175,7 @@ smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
 step = 0
+last_val_bpb = None
 while True:
     flops_so_far = num_flops_per_token * total_batch_size * step
 
@@ -184,6 +195,7 @@ while True:
         print0(f"Step {step:05d} | Validation bpb: {val_bpb:.4f}")
         if val_bpb < min_val_bpb:
             min_val_bpb = val_bpb
+        last_val_bpb = val_bpb
         wandb_run.log({
             "step": step,
             "total_training_flops": flops_so_far,
@@ -191,11 +203,17 @@ while True:
             "val/bpb": val_bpb,
         })
         model.train()
+        
+        # Clear GPU cache after evaluation to reduce memory pressure
+        if torch_compile:
+            torch.cuda.empty_cache()
 
-    # save checkpoint at the end of the run (only on master process)
-    if master_process and last_step and not dry_run:
+    # save checkpoint periodically and at the end (only on master process)
+    should_save = last_step or (save_every > 0 and step > 0 and step % save_every == 0)
+    if master_process and should_save and not dry_run:
         output_dirname = f"d{depth}" # e.g. d12
         checkpoint_dir = os.path.join(base_dir, "mid_checkpoints", output_dirname)
+        val_bpb_to_log = last_val_bpb if last_val_bpb is not None else float("nan")
         save_checkpoint(
             checkpoint_dir,
             step,
@@ -203,7 +221,7 @@ while True:
             [opt.state_dict() for opt in optimizers], # TODO: make sure saving across ranks is done correctly
             {
                 "step": step,
-                "val_bpb": val_bpb, # loss at last step
+                "val_bpb": val_bpb_to_log, # loss at last eval
                 "model_config": {
                     "sequence_len": max_seq_len,
                     "vocab_size": tokenizer.get_vocab_size(),
@@ -215,6 +233,7 @@ while True:
                 "user_config": user_config, # inputs to the training script
             }
         )
+        print0(f"✅ Saved checkpoint at step {step}")
 
     if last_step:
         break

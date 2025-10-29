@@ -192,7 +192,11 @@ class Engine:
         sampled_tokens = next_ids[:, 0].tolist()
 
         # 2) Replicate the KV cache for each sample/row
-        kv_length_hint = (len(tokens) + max_tokens) if max_tokens is not None else self.model.config.sequence_len
+        # Optimize seq_len: start with reasonable estimate, cache will grow dynamically if needed
+        # Use actual prefix length + reasonable buffer instead of max_tokens to avoid over-allocation
+        kv_length_hint = len(tokens) + (max_tokens if max_tokens is not None else 256)
+        # Round up to nearest 256 for memory efficiency, but cap at reasonable limit
+        kv_length_hint = min(kv_length_hint, self.model.config.sequence_len)
         kv_cache_decode = KVCache(
             batch_size=num_samples,
             seq_len=kv_length_hint,
@@ -277,17 +281,26 @@ class Engine:
         results = [tokens.copy() for _ in range(num_samples)]
         masks = [[0] * len(tokens) for _ in range(num_samples)]
         completed = [False] * num_samples
-        for token_column, token_masks in self.generate(tokens, num_samples, **kwargs):
-            for i, (token, mask) in enumerate(zip(token_column, token_masks)):
-                if not completed[i]:
-                    if token == assistant_end or token == bos:
-                        completed[i] = True
-                    else:
-                        results[i].append(token)
-                        masks[i].append(mask)
-            # Stop if all rows are completed
-            if all(completed):
-                break
+        # Use the generator to collect tokens
+        generation_iter = self.generate(tokens, num_samples, **kwargs)
+        try:
+            for token_column, token_masks in generation_iter:
+                for i, (token, mask) in enumerate(zip(token_column, token_masks)):
+                    if not completed[i]:
+                        if token == assistant_end or token == bos:
+                            completed[i] = True
+                        else:
+                            results[i].append(token)
+                            masks[i].append(mask)
+                # Stop if all rows are completed
+                if all(completed):
+                    break
+        finally:
+            # Explicitly clean up the generator and any remaining KV cache
+            del generation_iter
+            # Force garbage collection if CUDA is available to free KV cache memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         return results, masks
 
 
